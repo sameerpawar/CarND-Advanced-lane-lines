@@ -24,3 +24,7 @@ The HSL model attempts to resemble more perceptual color models such as NCS or M
 
 
 
+tunable parameters
+1. ksize for sobel filter
+1. thresholds for vairous channels
+1. inclusion of various channels
