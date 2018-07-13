@@ -76,13 +76,18 @@ hence using a averaging window of length 5-10 frames for all parameters in Lines
 		- 	
 
 
+
 ## Todo
-1. Implement a basic version of project to check if we qualify the rubrics and then optimize for further improvements.
-1. implement lane finding algo-1 and 2 as functions
-1. All updates are in Lines class
-1. After call of each line finding/update call display function
-1. Write a separate display function that plots either original or binary, warped or unwarped image with estimated lane lines.
-1. Write function that measures curvature and offset from lane center. Again this can be called to compute these parameters for most recent lane poly fit values.
-1. Write separate Sanity check function that verifies latest estimates of lane lines from Lines class and either udpates or discards the current estimate.
-1. Write a function to mapout the current estimates on original unwarped image for video pipeline.
+1. Sanity check function:
+    - Confidence: 
+        - check proportion of pixels participating in lane detection vs whole image. It will give reference of how clean/easy the image is or how difficult the image is.
+        - if lines are parallel.
+        - if high confidence merge in best fit with higher weight. This will help on sharp turns/cruvy road so as to not get influence by too much deep history.
+        - if lower confidence merge with lower weight
+        - if no confidence at all, drop it dont update the best fit.
+    - Check individual lanes for difference with polynomial from best fit
+    - make lines parallel
+    - check lane width distance
+1. compute car offset from lane center.
+1. Draw filled green on video.
 ---

@@ -1,1 +1,4 @@
 *.html
+test_images/
+video_image_out/
+test_videos_output/
