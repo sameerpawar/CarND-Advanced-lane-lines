@@ -72,8 +72,8 @@ def hls_select(img, thresh=(0, 255), channel = 's'):
     if channel == 's':
         C = hls[:,:,2]
 
-    C = np.absolute(C).astype(float)
-    C = np.uint8(255*C/np.max(C))
+    #C = np.absolute(C).astype(float)
+    #C = np.uint8(255*C/np.max(C))
     binary_output = np.zeros_like(C) 
     binary_output[(thresh[0] < C) & (C <= thresh[1])] = 1
     return binary_output
@@ -86,19 +86,20 @@ def rgb_select(img, thresh=(0, 255), channel = 'r'):
     if channel == 'b':
         C = img[:,:,2]
 
-    C = np.absolute(C).astype(float)
-    C = np.uint8(255*C/np.max(C))
+    #C = np.absolute(C).astype(float)
+    #C = np.uint8(255*C/np.max(C))
     binary_output = np.zeros_like(C) 
     binary_output[(thresh[0] < C) & (C <= thresh[1])] = 1
     return binary_output    
 
-def get_binary_image(img, ksize = 3):
+def get_binary_image(img):
     image = cv2.undistort(img, mtx, dist, None, mtx)
-    gradx = abs_sobel_thresh(image, orient='x', sobel_kernel=ksize, thresh=(10, 100), nchannels = 3)
-    grady = abs_sobel_thresh(image, orient='y', sobel_kernel=ksize, thresh=(30, 100), nchannels = 3)
-    mag_binary = mag_thresh(image, sobel_kernel=ksize, mag_thresh=(20, 255), nchannels = 3)
-    dir_binary = dir_threshold(image, sobel_kernel=ksize, thresh=(0, 1.4), nchannels = 3)
-    s_binary = hls_select(image, thresh=(40, 255), channel = 's')
+    kernel_size_gradxy_mag = 9
+    gradx = abs_sobel_thresh(image, orient='x', sobel_kernel=kernel_size_gradxy_mag, thresh=(20, 100), nchannels = 3)
+    grady = abs_sobel_thresh(image, orient='y', sobel_kernel=kernel_size_gradxy_mag, thresh=(30, 100), nchannels = 3)
+    mag_binary = mag_thresh(image, sobel_kernel=kernel_size_gradxy_mag, mag_thresh=(30, 255), nchannels = 3)
+    dir_binary = dir_threshold(image, sobel_kernel=15, thresh=(0.7, 1.4), nchannels = 3)
+    s_binary = hls_select(image, thresh=(90, 255), channel = 's')
     h_binary = hls_select(image, thresh=(15, 100), channel = 'h')
     r_binary = rgb_select(image, thresh=(150, 255), channel = 'r')
     
@@ -108,7 +109,7 @@ def get_binary_image(img, ksize = 3):
     combined_binary[gradx == 1] = 1
     combined_binary[grady == 1] = 1
     combined_binary[h_binary == 1] = 1
-    combined_binary[r_binary == 1] = 1
+    #combined_binary[r_binary == 1] = 1
     combined_binary[s_binary == 1] = 1
     combined_binary[mag_binary == 0] = 0
     combined_binary[dir_binary == 0] = 0
@@ -146,6 +147,38 @@ class Line():
         #self.allx = None  
         #y values for detected line pixels
         #self.ally = None
+
+    def update_curvature(self):
+        # computes and updates the curvature for best fit
+        # change it from pixels to meters
+        a, b, c = self.best_fit
+        y_eval = 720
+        self.radius_of_curvature = ((1 + (2*a*y_eval + b)**2)**1.5) / np.absolute(2*a)
+
+    def set_detected(self):
+        # Good lane detected
+        self.detected = True
+        self.nFailedFrames = 0
+
+    def updateCounter(self):
+        self.nFailedFrames += 1
+        if self.nFailedFrames > 5:
+            self.detected = False
+            self.nFailedFrames = 0
+        
+    def reset_detected(self):
+        # computes and updates the curvature for current fit
+        self.detected = False
+        
+    def update_best_fit(self):
+        if self.best_fit is None:
+            self.best_fit = self.current_fit
+        else:
+            self.best_fit = self.best_fit*0 + self.current_fit
+        
+    def update_line_base_pos(self):
+        # computes and updates the curvature for current fit
+        self.line_base_pos = 0
 
     def update_lane_line(self, binary_warped, alg = 'alg1'):    
         
@@ -217,6 +250,7 @@ class Line():
 
         # Fit a second order polynomial to each
         lane_fit = np.polyfit(laney, lanex, 2)
+
         if FIT2WICE:
             lane_inds = ((nonzerox > (lane_fit[0]*(nonzeroy**2) + lane_fit[1]*nonzeroy + 
             lane_fit[2] - margin)) & (nonzerox < (lane_fit[0]*(nonzeroy**2) + 
@@ -230,55 +264,29 @@ class Line():
         self.current_fit = np.polyfit(laney, lanex, 2)
         return
 
-    def update_curvature(self):
-        # computes and updates the curvature for current fit
-        self.radius_of_curvature = 0
-
-    def set_detected(self):
-        # Good lane detected
-        self.detected = True
-        self.nFailedFrames = 0
-
-    def updateCounter(self):
-        self.nFailedFrames += 1
-        if self.nFailedFrames > 5:
-            self.detected = False
-            self.nFailedFrames = 0
-        
-    def reset_detected(self):
-        # computes and updates the curvature for current fit
-        self.detected = False
-        
-    def update_best_fit(self, lane_fit):
-        if self.best_fit is None:
-            self.best_fit = lane_fit
-        else:
-            self.best_fit = self.best_fit*0.6 + 0.4*lane_fit
-    
-    
-    def update_line_base_pos(self):
-        # computes and updates the curvature for current fit
-        self.line_base_pos = 0
-
-
 def sanity_check(left_lane, right_lane):
     sanity_flag = False
-        
-    # Load the current fit
-    left_fit  = left_lane.current_fit
-    right_fit = right_lane.current_fit
+    
+    # compute lane width in meters
+    left_lane_fit = left_lane.best_fit
+    right_lane_fit = right_lane.best_fit
+    lane_width = np.absolute(left_lane_fit[2] - right_lane_fit[2])/190
+    
+
+    # update the curvature
+    left_lane.update_curvature()
+    right_lane.update_curvature()
+   
 
     # Check sanity and set the flag
     sanity_flag = True
     
-
-    
     if sanity_flag:
         # Adds to the history of fits
         # sets the detected flag
-        left_lane.update_best_fit(left_fit)
+        left_lane.update_best_fit()
         left_lane.set_detected()
-        right_lane.update_best_fit(right_fit)
+        right_lane.update_best_fit()
         right_lane.set_detected()
     else:
         #increase failed frame counter

@@ -1,4 +1,6 @@
 *.html
+*_v*.py
 test_images/
 video_image_out/
+video_image_in/
 test_videos_output/
