@@ -18,6 +18,11 @@ import cv2
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
+# meters per pixel in X-direction    
+mpx_x = 3.8/780
+# meters per pixel in Y-direction    
+mpx_y = 30/720
+
 def abs_sobel_thresh(image, orient='x', sobel_kernel=3, thresh=(0, 255), nchannels = 1):
     # Convert to grayscale if the image is color
     if nchannels == 3:
@@ -94,11 +99,11 @@ def rgb_select(img, thresh=(0, 255), channel = 'r'):
 
 def get_binary_image(img):
     image = cv2.undistort(img, mtx, dist, None, mtx)
-    kernel_size_gradxy_mag = 9
+    kernel_size_gradxy_mag = 7
     gradx = abs_sobel_thresh(image, orient='x', sobel_kernel=kernel_size_gradxy_mag, thresh=(20, 100), nchannels = 3)
     grady = abs_sobel_thresh(image, orient='y', sobel_kernel=kernel_size_gradxy_mag, thresh=(30, 100), nchannels = 3)
     mag_binary = mag_thresh(image, sobel_kernel=kernel_size_gradxy_mag, mag_thresh=(30, 255), nchannels = 3)
-    dir_binary = dir_threshold(image, sobel_kernel=15, thresh=(0.7, 1.4), nchannels = 3)
+    dir_binary = dir_threshold(image, sobel_kernel=15, thresh=(0, 1.3), nchannels = 3)
     s_binary = hls_select(image, thresh=(90, 255), channel = 's')
     h_binary = hls_select(image, thresh=(15, 100), channel = 'h')
     r_binary = rgb_select(image, thresh=(150, 255), channel = 'r')
@@ -108,14 +113,12 @@ def get_binary_image(img):
     combined_binary = np.zeros_like(image[:,:,0])
     combined_binary[gradx == 1] = 1
     combined_binary[grady == 1] = 1
-    combined_binary[h_binary == 1] = 1
-    #combined_binary[r_binary == 1] = 1
-    combined_binary[s_binary == 1] = 1
-    combined_binary[mag_binary == 0] = 0
+    combined_binary[mag_binary == 0] = 0    
     combined_binary[dir_binary == 0] = 0
-    
-    binary_image = cv2.warpPerspective(combined_binary, M, (img.shape[1], img.shape[0]), flags=cv2.INTER_NEAREST)  # keep same size as input image    
-    return binary_image   
+    #combined_binary[h_binary == 1] = 1
+    #combined_binary[r_binary == 1] = 1
+    combined_binary[s_binary == 1] = 1      
+    return combined_binary   
 
 # Define a class to receive the characteristics of each line detection
 from collections import deque
@@ -125,6 +128,7 @@ class Line():
         # was the line detected in the last iteration?
         self.detected = False  
         self.nFailedFrames = 0  
+        self.nresetFrames = 0
         # confidence in percentage of range over which search the x-values in hist
         # self.confidence = 0
         # x values of the last n = 5 fits of the line
@@ -140,7 +144,7 @@ class Line():
         #radius of curvature of the line in some units
         self.radius_of_curvature = None 
         #distance in meters of vehicle center from the line
-        self.line_base_pos = None 
+        self.line_base_pos = 0 
         #difference in fit coefficients between last and new fits
         #self.diffs = np.array([0,0,0], dtype='float') 
         #x values for detected line pixels
@@ -152,8 +156,9 @@ class Line():
         # computes and updates the curvature for best fit
         # change it from pixels to meters
         a, b, c = self.best_fit
-        y_eval = 720
-        self.radius_of_curvature = ((1 + (2*a*y_eval + b)**2)**1.5) / np.absolute(2*a)
+        a = a*mpx_x/(mpx_y**2)
+        b = b*mpx_x/mpx_y
+        self.radius_of_curvature = ((1 + (2*a*30 + b)**2)**1.5) / np.absolute(2*a)
 
     def set_detected(self):
         # Good lane detected
@@ -162,7 +167,7 @@ class Line():
 
     def updateCounter(self):
         self.nFailedFrames += 1
-        if self.nFailedFrames > 5:
+        if self.nFailedFrames > 10:
             self.detected = False
             self.nFailedFrames = 0
         
@@ -171,16 +176,13 @@ class Line():
         self.detected = False
         
     def update_best_fit(self):
-        if self.best_fit is None:
-            self.best_fit = self.current_fit
-        else:
-            self.best_fit = self.best_fit*0 + self.current_fit
+        self.best_fit = self.best_fit*0.7 + 0.3*self.current_fit
         
     def update_line_base_pos(self):
         # computes and updates the curvature for current fit
         self.line_base_pos = 0
 
-    def update_lane_line(self, binary_warped, alg = 'alg1'):    
+    def update_lane_line(self, binary_image, alg = 'alg1'):            
         
         #******************************************************************************
         # Set the hyper parameters and initialization
@@ -193,6 +195,7 @@ class Line():
         minpix = 50        
         # Choose the number of sliding windows for finding pixels
         nwindows = 9
+        binary_warped = cv2.warpPerspective(binary_image, M, (binary_image.shape[1], binary_image.shape[0]), flags=cv2.INTER_NEAREST)  # keep same size as input image            
         window_height = np.int(binary_warped.shape[0]//nwindows)
         # Identify the x and y positions of all nonzero pixels in the image
         nonzero = binary_warped.nonzero()
@@ -202,6 +205,7 @@ class Line():
         
         if self.detected:
             # If previous lane was detected with great confidence
+            margin = 60
             lane_fit = self.best_fit
             lane_inds = ((nonzerox > (lane_fit[0]*(nonzeroy**2) + lane_fit[1]*nonzeroy + 
             lane_fit[2] - margin)) & (nonzerox < (lane_fit[0]*(nonzeroy**2) + 
@@ -251,10 +255,12 @@ class Line():
         # Fit a second order polynomial to each
         lane_fit = np.polyfit(laney, lanex, 2)
 
+        
         if FIT2WICE:
+            margin1 = 50
             lane_inds = ((nonzerox > (lane_fit[0]*(nonzeroy**2) + lane_fit[1]*nonzeroy + 
-            lane_fit[2] - margin)) & (nonzerox < (lane_fit[0]*(nonzeroy**2) + 
-            lane_fit[1]*nonzeroy + lane_fit[2] + margin)))
+            lane_fit[2] - margin1)) & (nonzerox < (lane_fit[0]*(nonzeroy**2) + 
+            lane_fit[1]*nonzeroy + lane_fit[2] + margin1)))
 
             # Again, extract lane pixel positions
             lanex = nonzerox[lane_inds]
@@ -262,24 +268,29 @@ class Line():
 
         # Fit a second order polynomial to each
         self.current_fit = np.polyfit(laney, lanex, 2)
+        if self.best_fit is None:
+            self.best_fit = self.current_fit
         return
 
-def sanity_check(left_lane, right_lane):
-    sanity_flag = False
-    
-    # compute lane width in meters
-    left_lane_fit = left_lane.best_fit
-    right_lane_fit = right_lane.best_fit
-    lane_width = np.absolute(left_lane_fit[2] - right_lane_fit[2])/190
-    
-
-    # update the curvature
-    left_lane.update_curvature()
-    right_lane.update_curvature()
-   
-
-    # Check sanity and set the flag
+def sanity_check(left_lane, right_lane):    
     sanity_flag = True
+    # compute lane width in meters for current fit
+    la, lb, lc = left_lane.current_fit
+    ra, rb, rc = right_lane.current_fit
+    y = np.linspace(0, 720, 121)
+    left_lane_pts = (la*(y**2) + lb*y + lc)
+    right_lane_pts = (ra*(y**2) + rb*y + rc)
+    diff = np.absolute(left_lane_pts-right_lane_pts)
+    # lane width in meters
+    lane_width = np.mean(diff)*mpx_x
+    
+    # Check if lanes are almost parallel
+    if (np.max(diff)/np.min(diff)) > 1.15:
+           sanity_flag = False
+    
+    # check if lane width makes sense
+    if lane_width < 3 or lane_width > 5:
+        sanity_flag = False
     
     if sanity_flag:
         # Adds to the history of fits
@@ -291,34 +302,81 @@ def sanity_check(left_lane, right_lane):
     else:
         #increase failed frame counter
         left_lane.updateCounter()
-        right_lane.updateCounter()
+        right_lane.updateCounter()        
+        if left_lane.nFailedFrames == 0:
+            left_lane.nresetFrames += 1
+            print("reset = ", left_lane.nresetFrames)
         
-        
-
-def display_lanes(image, left_fit, right_fit):
+def display_lanes(image, left_lane, right_lane, style = 'orig'):
+    left_fit = left_lane.best_fit
+    right_fit = right_lane.best_fit
+    
     # Generate x and y values for plotting
     ploty = np.linspace(0, image.shape[0]-1, image.shape[0] )
     left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
     right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
     
     # Create an image to draw on and an image to show the selection window
-    window_img = np.zeros_like(image)
+    color_warp = np.zeros_like(image)
     # Generate a polygon to illustrate the search window area
     # And recast the x and y points into usable format for cv2.fillPoly()
-    margin1 = 10
-    left_line_window1 = np.array([np.transpose(np.vstack([left_fitx-margin1, ploty]))])
-    left_line_window2 = np.array([np.flipud(np.transpose(np.vstack([left_fitx+margin1, 
-                                  ploty])))])
-    left_line_pts = np.hstack((left_line_window1, left_line_window2))
-    right_line_window1 = np.array([np.transpose(np.vstack([right_fitx-margin1, ploty]))])
-    right_line_window2 = np.array([np.flipud(np.transpose(np.vstack([right_fitx+margin1, 
-                                  ploty])))])
-    right_line_pts = np.hstack((right_line_window1, right_line_window2))
-
-    # Draw the lane onto the warped blank image
-    cv2.fillPoly(window_img, np.int_([left_line_pts]), (255,0, 0))
-    cv2.fillPoly(window_img, np.int_([right_line_pts]), (255,0, 0))
+    pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
+    pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
+    pts = np.hstack((pts_left, pts_right))
+    cv2.fillPoly(color_warp, np.int_([pts]), (0,255, 0))
     
-    unwarped_image = cv2.warpPerspective(window_img, Minv, (image.shape[1], image.shape[0]), flags=cv2.INTER_NEAREST)
-    result = cv2.addWeighted(image, 1, unwarped_image, 0.8, 0) 
+    if style == 'orig':
+        unwarped_image = cv2.warpPerspective(color_warp, Minv, (image.shape[1], image.shape[0]), flags=cv2.INTER_NEAREST)
+        result = cv2.addWeighted(image, 1, unwarped_image, 0.3, 0) 
+    else:
+        unwarped_image = color_warp
+        image  = cv2.warpPerspective(image, M, (image.shape[1], image.shape[0]), flags=cv2.INTER_NEAREST)
+        result = cv2.addWeighted(image, 1, unwarped_image, 0.3, 0)     
+    
+    font                   = cv2.FONT_HERSHEY_SIMPLEX
+    bottomLeftCornerOfText1 = (100,50)
+    bottomLeftCornerOfText2 = (100,100)
+    fontScale              = 1
+    fontColor              = (255,255,255)
+    lineType               = 2
+
+    
+    # compute the lane curvature and offset from center
+    right_lane.update_curvature()
+    radius = np.round(right_lane.radius_of_curvature*100)/100
+    # compute lane offset from center of image
+    la, lb, lc = left_lane.best_fit
+    ra, rb, rc = right_lane.best_fit
+    y = np.linspace(0, 720, 121)
+    left_lane_pts = (la*(y**2) + lb*y + lc)
+    right_lane_pts = (ra*(y**2) + rb*y + rc)
+    lane_width_pixels = np.absolute(right_lane_pts-left_lane_pts)
+    lane_array_str = str(np.array([np.max(lane_width_pixels)/np.min(lane_width_pixels), np.mean(lane_width_pixels), np.max(lane_width_pixels)]))
+    
+    center = lane_width_pixels[-1]
+    offset_pixels = 1280/2-center
+    offset_meters = np.round(offset_pixels*mpx_x*100)/100
+
+    if offset_meters < 0:
+        offset_str = "Vehicle is " + str(-offset_meters) + "(m) right of the center"
+    else:
+        offset_str = "Vehicle is " + str(offset_meters) + "(m) left of the center"
+     
+    
+    cv2.putText(result,'Radius of curvature = ' + str(radius) + "(m)", 
+        bottomLeftCornerOfText1, 
+        font, 
+        fontScale,
+        fontColor,
+        lineType)
+
+    cv2.putText(result,offset_str, 
+        bottomLeftCornerOfText2, 
+        font, 
+        fontScale,
+        fontColor,
+        lineType)
+
+    
+    
     return result

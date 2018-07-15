@@ -88,6 +88,28 @@ hence using a averaging window of length 5-10 frames for all parameters in Lines
     - Check individual lanes for difference with polynomial from best fit
     - make lines parallel
     - check lane width distance
-1. compute car offset from lane center.
-1. Draw filled green on video.
+1. Possible optimizations:
+    - S-channel threshold 
+        - 90, 
+        - 130, ---
+        - 170
+    - check lane if parallel using mean, min and max.
+        - mean/max < 0.88 --- 
+
+    - look ahead window around previous lane
+        - 100 ---  
+        - 150
+    - weight factor for merging with best_fit
+        - [0.7, 0.3] ---
+        - keep last 10 frames data in a queue
+    - update lane line
+        - twice ---
+        - once
+    
+    - Warp function
+        - use default
+        - use nearest ---
+    - Look at additional variables defined in the Line() class
+    - 191 and 323 reset
+    - there is issue of shades adding horizontal direction pixels due to S channel. It is tricky to increase S threshold. So need to have a way to eliminate these pixels from contributing to the polynomial fit.
 ---
